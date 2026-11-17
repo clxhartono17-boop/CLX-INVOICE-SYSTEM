@@ -11,6 +11,7 @@ import type {
 import {
   DEFAULT_SETTINGS,
   buildRetentionReminders,
+  formatAuthErrorMessage,
 } from './utils/invoiceLogic';
 import {
   getAccessToken,
@@ -179,9 +180,7 @@ export default function App() {
         await syncWithGoogleSheets(res.accessToken);
       }
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : 'Login Google dibatalkan atau gagal.';
-      setAuthError(msg);
+      setAuthError(formatAuthErrorMessage(err));
     } finally {
       setIsLoggingIn(false);
     }

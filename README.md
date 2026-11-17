@@ -35,7 +35,10 @@ Build produksi untuk Vercel:
 npm run build
 ```
 
-Saat deploy ke Vercel:
+Saat deploy ke Vercel & akses multi-user (Tim Finance):
 1. Push repository ini ke GitHub.
 2. Import project di Vercel (Framework Preset: **Vite**, Build Command: `npm run build`, Output Directory: `dist`).
-3. Tambahkan domain Vercel Anda (misalnya `nama-app.vercel.app`) ke **Authorized Domains** di Firebase Console (`Authentication > Settings > Authorized domains`) agar `Sign in with Google` berjalan di domain produksi.
+3. Tambahkan domain Vercel Anda (misalnya `nama-app.vercel.app`) ke **Authorized Domains** di Firebase Console (`Authentication > Settings > Authorized domains`) agar tidak muncul error `auth/unauthorized-domain`.
+4. Di Google Cloud Console (`APIs & Services > OAuth consent screen` pada project `gen-lang-client-0070600289`), tambahkan seluruh email user finance ke **Test users** (atau klik **Publish App** ke Production) agar email selain pemilik project tidak terkena `Error 403: access_denied`.
+5. Pastikan email user finance tersebut juga sudah di-*Share* sebagai **Editor** pada file Google Spreadsheet target.
+

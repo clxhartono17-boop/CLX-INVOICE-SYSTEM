@@ -872,3 +872,28 @@ export function buildDashboardMetrics(
     monthlyTrend,
   };
 }
+
+export function formatAuthErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code ?? '')
+      : '';
+  const combined = `${code} ${raw}`.toLowerCase();
+
+  if (combined.includes('unauthorized-domain')) {
+    return 'Domain aplikasi ini belum didaftarkan di Firebase Authentication > Settings > Authorized domains. Tambahkan domain Vercel Anda ke daftar tersebut lalu coba login lagi.';
+  }
+  if (combined.includes('access_denied') || combined.includes('verification process')) {
+    return 'Akses Google diblokir (Error 403 access_denied): OAuth Consent Screen masih berstatus Testing. Tambahkan email user finance di Google Cloud Console > APIs & Services > OAuth consent screen > Test users (atau Publish App), dan pastikan email tersebut diberi akses Editor pada Google Sheet.';
+  }
+  if (combined.includes('popup-closed-by-user')) {
+    return 'Popup login Google ditutup sebelum proses selesai. Jika terblokir di layar Google, pastikan email sudah terdaftar di Test users (OAuth consent screen).';
+  }
+  if (combined.includes('popup-blocked')) {
+    return 'Popup login diblokir oleh browser. Izinkan pop-up untuk situs ini lalu coba Sign in with Google kembali.';
+  }
+
+  return raw || 'Login Google dibatalkan atau gagal.';
+}
+

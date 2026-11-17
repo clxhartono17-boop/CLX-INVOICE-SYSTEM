@@ -10,6 +10,7 @@ import {
   parseQueryRows,
   parseSheetDateToIso,
   validateInvoiceForm,
+  formatAuthErrorMessage,
 } from './invoiceLogic';
 import type { InvoiceRecord, QueryRow } from '../types/invoice';
 
@@ -207,3 +208,12 @@ test('validateInvoiceForm rejects duplicate invoice number even in LEGACY mode',
   });
   assert.ok(err && err.includes('sudah ada'));
 });
+
+test('formatAuthErrorMessage provides clear Indonesian guidance for OAuth & domain errors', () => {
+  const domainErr = formatAuthErrorMessage({ code: 'auth/unauthorized-domain', message: 'Firebase: Error (auth/unauthorized-domain).' });
+  assert.ok(domainErr.includes('Authorized domains'));
+
+  const deniedErr = formatAuthErrorMessage(new Error('Access blocked: Error 403: access_denied'));
+  assert.ok(deniedErr.includes('Test users'));
+});
+
