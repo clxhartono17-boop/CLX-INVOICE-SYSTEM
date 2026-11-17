@@ -1,0 +1,6 @@
+{
+  "name": "PT. CLX Invoice & Termin System",
+  "description": "Sistem manajemen invoice, kontrol termin 35%/60%/5%, verifikasi pembayaran, reminder retensi 1 tahun, dan generator PDF A4 terintegrasi Google Sheets untuk PT. Connectivity Leads eXcellence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
