@@ -1,33 +1,67 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { InvoiceRecord } from '../types/invoice';
 import {
   formatDateDdMmmYyyy,
   formatRupiahWithPrefix,
   isVgreenCustomer,
 } from '../utils/invoiceLogic';
-import { CheckCircle2, Edit3, FileDown, Eye, Plus, Search, History } from 'lucide-react';
+import {
+  CheckCircle2,
+  CheckSquare,
+  Edit3,
+  Eye,
+  FileDown,
+  FileSpreadsheet,
+  History,
+  Plus,
+  Search,
+} from 'lucide-react';
 
 interface InvoiceListViewProps {
   invoices: InvoiceRecord[];
   onCreateNew: (mode: 'NEW' | 'LEGACY') => void;
+  onOpenBulkCreate: (mode: 'NEW' | 'LEGACY') => void;
   onEditInvoice: (invoice: InvoiceRecord) => void;
   onOpenPdf: (invoice: InvoiceRecord) => void;
   onDownloadPdf: (invoice: InvoiceRecord) => void;
   onOpenVerifyPayment: (invoice: InvoiceRecord) => void;
+  onOpenBulkVerifyPayment: (invoices: InvoiceRecord[]) => void;
 }
 
 export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
   invoices,
   onCreateNew,
+  onOpenBulkCreate,
   onEditInvoice,
   onOpenPdf,
   onDownloadPdf,
   onOpenVerifyPayment,
+  onOpenBulkVerifyPayment,
 }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'UNPAID'>('ALL');
   const [terminFilter, setTerminFilter] = useState<'ALL' | '35' | '60' | '5'>('ALL');
   const [modeFilter, setModeFilter] = useState<'ALL' | 'NEW' | 'LEGACY'>('ALL');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Automatically drop checked IDs if an invoice becomes PAID or is removed
+  useEffect(() => {
+    const unpaidSet = new Set(
+      invoices.filter((inv) => inv.paymentStatus === 'UNPAID').map((inv) => inv.id)
+    );
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (unpaidSet.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [invoices]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -49,8 +83,51 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
       });
   }, [invoices, search, statusFilter, terminFilter, modeFilter]);
 
+  const selectableFiltered = useMemo(
+    () => filtered.filter((inv) => inv.paymentStatus === 'UNPAID'),
+    [filtered]
+  );
+
+  const allVisibleUnpaidSelected =
+    selectableFiltered.length > 0 &&
+    selectableFiltered.every((inv) => selectedIds.has(inv.id));
+
+  const selectedInvoices = useMemo(
+    () => invoices.filter((inv) => inv.paymentStatus === 'UNPAID' && selectedIds.has(inv.id)),
+    [invoices, selectedIds]
+  );
+
+  const selectedTotalAmount = useMemo(
+    () => selectedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0),
+    [selectedInvoices]
+  );
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleUnpaidSelected) {
+        selectableFiltered.forEach((inv) => next.delete(inv.id));
+      } else {
+        selectableFiltered.forEach((inv) => next.add(inv.id));
+      }
+      return next;
+    });
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center gap-2.5">
@@ -60,7 +137,7 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari invoice, lokasi, WO..."
+              placeholder="Cari invoice, customer, WO..."
               aria-label="Cari daftar invoice"
               className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 py-1.5 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
             />
@@ -107,7 +184,15 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
           </select>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => onOpenBulkCreate('NEW')}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors whitespace-nowrap"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-[#0A192F]" />
+            <span>Bulk Upload</span>
+          </button>
           <button
             type="button"
             onClick={() => onCreateNew('LEGACY')}
@@ -119,13 +204,53 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
           <button
             type="button"
             onClick={() => onCreateNew('NEW')}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#0A192F] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#142B4F] transition-colors whitespace-nowrap"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Buat Invoice Baru</span>
           </button>
         </div>
       </div>
+
+      {/* Contextual Bulk Payment Checklist Bar */}
+      {selectedInvoices.length > 0 && (
+        <div
+          role="region"
+          aria-label="Aksi verifikasi pembayaran massal"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#0A192F] px-4 py-3 text-white shadow-sm"
+        >
+          <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums">
+            <span className="inline-flex items-center gap-1.5 font-semibold">
+              <CheckSquare className="h-4 w-4 text-emerald-400" />
+              <span>{selectedInvoices.length} invoice belum bayar dipilih</span>
+            </span>
+            <span className="text-white/30" aria-hidden="true">
+              |
+            </span>
+            <span className="font-mono text-emerald-300 font-semibold">
+              Total Tagihan: {formatRupiahWithPrefix(selectedTotalAmount)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors whitespace-nowrap"
+            >
+              Batal Pilih
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenBulkVerifyPayment(selectedInvoices)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors whitespace-nowrap"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>Verifikasi Pembayaran ({selectedInvoices.length})</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Data Table */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
@@ -135,7 +260,7 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
               Tidak ada invoice yang cocok dengan filter Anda
             </div>
             <p className="text-xs text-slate-500">
-              Coba ubah kata kunci pencarian atau buat invoice baru dari data sheet Query.
+              Coba ubah kata kunci pencarian atau buat invoice baru / bulk upload.
             </p>
           </div>
         ) : (
@@ -143,6 +268,16 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500">
+                  <th className="py-2.5 pl-3.5 pr-1 w-9">
+                    <input
+                      type="checkbox"
+                      aria-label="Pilih semua invoice belum bayar"
+                      disabled={selectableFiltered.length === 0}
+                      checked={allVisibleUnpaidSelected}
+                      onChange={toggleSelectAllVisible}
+                      className="h-4 w-4 rounded border-slate-300 text-[#0A192F] focus:ring-[#0A192F] cursor-pointer disabled:opacity-40"
+                    />
+                  </th>
                   <th className="py-2.5 px-3">No. Invoice &amp; Tanggal</th>
                   <th className="py-2.5 px-3">Customer, Item &amp; WO/PO</th>
                   <th className="py-2.5 px-3">Termin</th>
@@ -152,95 +287,124 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {filtered.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-slate-50/75 transition-colors">
-                    <td className="py-3 px-3 max-w-[210px] tabular-nums">
-                      <div className="font-mono font-semibold text-slate-900 whitespace-nowrap">
-                        {inv.invoiceNumber}
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                        {formatDateDdMmmYyyy(inv.invoiceDate || inv.invoiceDateDisplay)} ·{' '}
-                        {inv.mode === 'LEGACY' ? 'Legacy' : 'Auto'}
-                        {inv.noEfaktur ? ` · ${inv.noEfaktur}` : ''}
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 max-w-[215px]">
-                      <div className="font-semibold text-slate-900 truncate">
-                        {inv.projectLocation || inv.items[0]?.description || '-'}
-                      </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {!isVgreenCustomer(inv.billToName) && inv.billToName
-                          ? `${inv.billToName} · `
-                          : ''}
-                        {inv.chargingType && inv.chargingType !== '-' ? `${inv.chargingType} · ` : ''}
-                        <span className="font-mono">{inv.consWoNumber || '-'}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap font-medium text-slate-800 tabular-nums">
-                      {inv.terminLabel}
-                    </td>
-                    <td className="py-3 px-3 text-right whitespace-nowrap tabular-nums">
-                      <div className="font-semibold text-slate-900">
-                        {formatRupiahWithPrefix(inv.grandTotal)}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        DPP: {formatRupiahWithPrefix(inv.terminAmount)}
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 max-w-[175px]">
-                      {inv.paymentStatus === 'PAID' ? (
-                        <div>
-                          <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 whitespace-nowrap">
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                            <span>Terbayar</span>
+                {filtered.map((inv) => {
+                  const isUnpaid = inv.paymentStatus === 'UNPAID';
+                  const isChecked = isUnpaid && selectedIds.has(inv.id);
+                  return (
+                    <tr
+                      key={inv.id}
+                      className={`transition-colors ${
+                        isChecked ? 'bg-emerald-50/45' : 'hover:bg-slate-50/75'
+                      }`}
+                    >
+                      <td className="py-3 pl-3.5 pr-1 align-middle">
+                        {isUnpaid ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Pilih invoice ${inv.invoiceNumber}`}
+                            checked={isChecked}
+                            onChange={() => toggleSelectOne(inv.id)}
+                            className="h-4 w-4 rounded border-slate-300 text-[#0A192F] focus:ring-[#0A192F] cursor-pointer"
+                          />
+                        ) : (
+                          <span
+                            title="Sudah lunas"
+                            className="inline-flex h-4 w-4 items-center justify-center text-emerald-500/50"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                           </span>
-                          <div className="text-[11px] text-slate-500 tabular-nums truncate">
-                            {inv.paidDate} {inv.paymentRef ? `· ${inv.paymentRef}` : ''}
-                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 max-w-[205px] tabular-nums">
+                        <div className="font-mono font-semibold text-slate-900 whitespace-nowrap">
+                          {inv.invoiceNumber}
                         </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onOpenVerifyPayment(inv)}
-                          className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline underline-offset-4 whitespace-nowrap"
-                        >
-                          Belum Bayar · Verifikasi
-                        </button>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 text-right whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => onOpenPdf(inv)}
-                          aria-label={`Preview PDF ${inv.invoiceNumber}`}
-                          title="Preview A4"
-                          className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDownloadPdf(inv)}
-                          aria-label={`Download PDF ${inv.invoiceNumber}`}
-                          title="Download PDF A4"
-                          className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-                        >
-                          <FileDown className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onEditInvoice(inv)}
-                          aria-label={`Edit invoice ${inv.invoiceNumber}`}
-                          title="Edit Invoice"
-                          className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-                        >
-                          <Edit3 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                          {formatDateDdMmmYyyy(inv.invoiceDate || inv.invoiceDateDisplay)} ·{' '}
+                          {inv.mode === 'LEGACY' ? 'Legacy' : 'Auto'}
+                          {inv.noEfaktur ? ` · ${inv.noEfaktur}` : ''}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 max-w-[215px]">
+                        <div className="font-semibold text-slate-900 truncate">
+                          {inv.projectLocation || inv.items[0]?.description || '-'}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          {!isVgreenCustomer(inv.billToName) && inv.billToName
+                            ? `${inv.billToName} · `
+                            : ''}
+                          {inv.chargingType && inv.chargingType !== '-'
+                            ? `${inv.chargingType} · `
+                            : ''}
+                          <span className="font-mono">{inv.consWoNumber || '-'}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap font-medium text-slate-800 tabular-nums">
+                        {inv.terminLabel}
+                      </td>
+                      <td className="py-3 px-3 text-right whitespace-nowrap tabular-nums">
+                        <div className="font-semibold text-slate-900">
+                          {formatRupiahWithPrefix(inv.grandTotal)}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          DPP: {formatRupiahWithPrefix(inv.terminAmount)}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 max-w-[175px]">
+                        {inv.paymentStatus === 'PAID' ? (
+                          <div>
+                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 whitespace-nowrap">
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                              <span>Terbayar</span>
+                            </span>
+                            <div className="text-[11px] text-slate-500 tabular-nums truncate">
+                              {inv.paidDate} {inv.paymentRef ? `· ${inv.paymentRef}` : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onOpenVerifyPayment(inv)}
+                            className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline underline-offset-4 whitespace-nowrap"
+                          >
+                            Belum Bayar · Verifikasi
+                          </button>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onOpenPdf(inv)}
+                            aria-label={`Preview PDF ${inv.invoiceNumber}`}
+                            title="Preview A4"
+                            className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDownloadPdf(inv)}
+                            aria-label={`Download PDF ${inv.invoiceNumber}`}
+                            title="Download PDF A4"
+                            className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                          >
+                            <FileDown className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onEditInvoice(inv)}
+                            aria-label={`Edit invoice ${inv.invoiceNumber}`}
+                            title="Edit Invoice"
+                            className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

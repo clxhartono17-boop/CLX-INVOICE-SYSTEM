@@ -26,11 +26,14 @@ import {
 import {
   appendCustomerRow,
   appendInvoiceRow,
+  appendInvoiceRowsBatch,
   ensureInvoicesSheet,
   readCustomersSheet,
   readInvoicesSheet,
   readQuerySheet,
+  readSheetValuesRaw,
   updateInvoiceRow,
+  updateInvoiceRowsBatch,
 } from './services/googleSheets';
 import {
   SANDBOX_CUSTOMERS,
@@ -45,6 +48,7 @@ import { InvoiceListView } from './components/InvoiceListView';
 import { ProjectMatrixView } from './components/ProjectMatrixView';
 import { RemindersView } from './components/RemindersView';
 import { InvoiceFormModal } from './components/InvoiceFormModal';
+import { BulkInvoiceModal } from './components/BulkInvoiceModal';
 import { PaymentModal } from './components/PaymentModal';
 import { InvoicePdfModal } from './components/InvoicePdfModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -117,14 +121,18 @@ export default function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Modals
+  // Modals & Dashboard Filter
+  const [dashboardCustomer, setDashboardCustomer] = useState<string>('ALL');
   const [formOpen, setFormOpen] = useState<boolean>(false);
   const [formMode, setFormMode] = useState<InvoiceMode>('NEW');
   const [editingInvoice, setEditingInvoice] = useState<InvoiceRecord | null>(null);
   const [preselectedRow, setPreselectedRow] = useState<QueryRow | null>(null);
   const [preselectedTermin, setPreselectedTermin] = useState<TerminPercent | undefined>(undefined);
 
-  const [paymentModalInvoice, setPaymentModalInvoice] = useState<InvoiceRecord | null>(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState<boolean>(false);
+  const [bulkModalMode, setBulkModalMode] = useState<InvoiceMode>('NEW');
+
+  const [paymentModalInvoices, setPaymentModalInvoices] = useState<InvoiceRecord[]>([]);
   const [pdfModalInvoice, setPdfModalInvoice] = useState<InvoiceRecord | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
 
@@ -378,8 +386,8 @@ export default function App() {
     }
   };
 
-  const handleConfirmPayment = async (
-    invoice: InvoiceRecord,
+  const handleConfirmPayments = async (
+    targetInvoices: InvoiceRecord[],
     payload: {
       paymentStatus: 'PAID' | 'UNPAID';
       paidDate: string;
@@ -387,24 +395,29 @@ export default function App() {
       paymentNote: string;
     }
   ) => {
+    if (targetInvoices.length === 0) return;
     setIsSaving(true);
     setSyncError(null);
-    const updatedInvoice: InvoiceRecord = {
-      ...invoice,
+    const nowIso = new Date().toISOString();
+    const updatedList: InvoiceRecord[] = targetInvoices.map((inv) => ({
+      ...inv,
       paymentStatus: payload.paymentStatus,
       paidDate: payload.paidDate,
       paymentRef: payload.paymentRef,
       paymentNote: payload.paymentNote,
-      updatedAt: new Date().toISOString(),
-    };
+      updatedAt: nowIso,
+    }));
 
     try {
       if (isSandbox) {
-        setInvoices((prev) =>
-          prev.map((item) => (item.id === updatedInvoice.id ? updatedInvoice : item))
+        const updatedById = new Map(updatedList.map((u) => [u.id, u]));
+        setInvoices((prev) => prev.map((item) => updatedById.get(item.id) || item));
+        setPaymentModalInvoices([]);
+        showToast(
+          updatedList.length === 1
+            ? `Pembayaran ${updatedList[0].invoiceNumber} terverifikasi (Sandbox).`
+            : `${updatedList.length} invoice berhasil diverifikasi lunas sekaligus (Sandbox).`
         );
-        setPaymentModalInvoice(null);
-        showToast(`Pembayaran ${updatedInvoice.invoiceNumber} terverifikasi (Sandbox).`);
         return;
       }
 
@@ -414,17 +427,125 @@ export default function App() {
         throw new Error('Sesi Google Anda berakhir. Silakan login kembali.');
       }
 
-      const saved = await updateInvoiceRow(
-        settings.spreadsheetId,
-        token,
-        updatedInvoice,
-        settings.invoicesSheetName
+      const savedList =
+        updatedList.length === 1
+          ? [
+              await updateInvoiceRow(
+                settings.spreadsheetId,
+                token,
+                updatedList[0],
+                settings.invoicesSheetName
+              ),
+            ]
+          : await updateInvoiceRowsBatch(
+              settings.spreadsheetId,
+              token,
+              updatedList,
+              settings.invoicesSheetName
+            );
+
+      const savedById = new Map(savedList.map((u) => [u.id, u]));
+      setInvoices((prev) => prev.map((item) => savedById.get(item.id) || item));
+      setPaymentModalInvoices([]);
+      showToast(
+        savedList.length === 1
+          ? `Pembayaran ${savedList[0].invoiceNumber} berhasil diverifikasi di Google Sheet.`
+          : `${savedList.length} invoice berhasil diverifikasi lunas sekaligus di Google Sheet.`
       );
-      setInvoices((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
-      setPaymentModalInvoice(null);
-      showToast(`Pembayaran ${saved.invoiceNumber} berhasil diverifikasi di Google Sheet.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gagal memverifikasi pembayaran.';
+      setSyncError(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleFetchBulkSheetGrid = async (
+    spreadsheetId: string,
+    sheetName: string
+  ): Promise<unknown[][]> => {
+    const token = getAccessToken();
+    if (!token) {
+      setNeedsAuth(true);
+      throw new Error('Sesi Google Anda berakhir. Silakan Sign in with Google kembali.');
+    }
+    return readSheetValuesRaw(spreadsheetId, token, sheetName);
+  };
+
+  const handleCommitBulkInvoices = async (
+    newInvoices: InvoiceRecord[],
+    newCustomersToCreate: Array<{ name: string; address: string }>
+  ) => {
+    if (newInvoices.length === 0) return;
+    setIsSaving(true);
+    setSyncError(null);
+    try {
+      const nowIso = new Date().toISOString();
+      if (isSandbox) {
+        if (newCustomersToCreate.length > 0) {
+          const addedCusts: CustomerRecord[] = newCustomersToCreate.map((c, idx) => ({
+            id: `cust-bulk-${Date.now()}-${idx}`,
+            name: c.name.trim(),
+            address: c.address.trim(),
+            isVgreen: isVgreenCustomer(c.name),
+            createdAt: nowIso,
+          }));
+          setCustomers((prev) => mergeCustomerLists([...prev, ...addedCusts], []));
+        }
+        setInvoices((prev) => [...prev, ...newInvoices]);
+        setBulkModalOpen(false);
+        showToast(`${newInvoices.length} invoice bulk berhasil diterbitkan (Sandbox).`);
+        return;
+      }
+
+      const token = getAccessToken();
+      if (!token) {
+        setNeedsAuth(true);
+        throw new Error('Sesi Google Anda berakhir. Silakan Sign in with Google kembali.');
+      }
+
+      if (newCustomersToCreate.length > 0) {
+        const createdCustomers: CustomerRecord[] = [];
+        for (let idx = 0; idx < newCustomersToCreate.length; idx++) {
+          const c = newCustomersToCreate[idx];
+          const savedCust = await appendCustomerRow(
+            settings.spreadsheetId,
+            token,
+            {
+              id: `cust-bulk-${Date.now()}-${idx}`,
+              name: c.name.trim(),
+              address: c.address.trim(),
+              isVgreen: isVgreenCustomer(c.name),
+              createdAt: nowIso,
+            },
+            settings.customersSheetName || 'Customers_DB'
+          );
+          createdCustomers.push(savedCust);
+        }
+        setCustomers((prev) => {
+          const next = mergeCustomerLists([...prev, ...createdCustomers], []);
+          try {
+            localStorage.setItem(CUSTOMERS_STORAGE_KEY, JSON.stringify(next));
+          } catch {
+            // ignore storage errors
+          }
+          return next;
+        });
+      }
+
+      const createdInvoices = await appendInvoiceRowsBatch(
+        settings.spreadsheetId,
+        token,
+        newInvoices,
+        settings.invoicesSheetName
+      );
+      setInvoices((prev) => [...prev, ...createdInvoices]);
+      setBulkModalOpen(false);
+      showToast(
+        `${createdInvoices.length} invoice bulk langsung tersimpan ke Google Sheet (${settings.invoicesSheetName}).`
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal menyimpan bulk invoice.';
       setSyncError(msg);
     } finally {
       setIsSaving(false);
@@ -752,14 +873,22 @@ export default function App() {
                 <DashboardView
                   queryRows={queryRows}
                   invoices={invoices}
+                  customers={customers}
+                  selectedCustomer={dashboardCustomer}
+                  onSelectCustomer={setDashboardCustomer}
                   referenceDateIso={referenceDateIso}
                   onNavigateTab={setActiveTab}
                   onCreateInvoiceForProject={(row, termin) =>
                     openCreateForm('NEW', row, termin)
                   }
                   onCreateNewInvoice={(mode) => openCreateForm(mode)}
+                  onOpenBulkCreate={(mode) => {
+                    setBulkModalMode(mode);
+                    setBulkModalOpen(true);
+                  }}
                   onOpenPdf={(inv) => setPdfModalInvoice(inv)}
-                  onOpenVerifyPayment={(inv) => setPaymentModalInvoice(inv)}
+                  onOpenVerifyPayment={(inv) => setPaymentModalInvoices([inv])}
+                  onOpenBulkVerifyPayment={(list) => setPaymentModalInvoices(list)}
                 />
               )}
 
@@ -767,10 +896,15 @@ export default function App() {
                 <InvoiceListView
                   invoices={invoices}
                   onCreateNew={(mode) => openCreateForm(mode)}
+                  onOpenBulkCreate={(mode) => {
+                    setBulkModalMode(mode);
+                    setBulkModalOpen(true);
+                  }}
                   onEditInvoice={(inv) => openEditForm(inv)}
                   onOpenPdf={(inv) => setPdfModalInvoice(inv)}
                   onDownloadPdf={(inv) => void generateInvoicePdf(inv)}
-                  onOpenVerifyPayment={(inv) => setPaymentModalInvoice(inv)}
+                  onOpenVerifyPayment={(inv) => setPaymentModalInvoices([inv])}
+                  onOpenBulkVerifyPayment={(list) => setPaymentModalInvoices(list)}
                 />
               )}
 
@@ -816,11 +950,25 @@ export default function App() {
         onSave={handleSaveInvoice}
       />
 
-      <PaymentModal
-        invoice={paymentModalInvoice}
+      <BulkInvoiceModal
+        open={bulkModalOpen}
+        initialMode={bulkModalMode}
+        queryRows={queryRows}
+        existingInvoices={invoices}
+        customers={customers}
+        settings={settings}
+        isSandbox={isSandbox}
         isSaving={isSaving}
-        onClose={() => setPaymentModalInvoice(null)}
-        onConfirmPayment={handleConfirmPayment}
+        onClose={() => setBulkModalOpen(false)}
+        onFetchGoogleSheetGrid={handleFetchBulkSheetGrid}
+        onCommitBulk={handleCommitBulkInvoices}
+      />
+
+      <PaymentModal
+        invoices={paymentModalInvoices}
+        isSaving={isSaving}
+        onClose={() => setPaymentModalInvoices([])}
+        onConfirmPayments={handleConfirmPayments}
       />
 
       <InvoicePdfModal

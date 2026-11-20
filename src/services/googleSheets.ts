@@ -443,6 +443,106 @@ export async function updateInvoiceRow(
   return invoice;
 }
 
+export async function appendInvoiceRowsBatch(
+  spreadsheetId: string,
+  accessToken: string,
+  invoices: InvoiceRecord[],
+  invoicesSheetName = 'Invoices_DB'
+): Promise<InvoiceRecord[]> {
+  if (invoices.length === 0) return [];
+  const { sheetName } = await ensureInvoicesSheet(spreadsheetId, accessToken, invoicesSheetName);
+  const range = encodeURIComponent(`'${sheetName}'!A:AH`);
+
+  const res = await sheetsFetch<{ updates?: { updatedRange?: string } }>(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        values: invoices.map(invoiceToRow),
+      }),
+    }
+  );
+
+  let startRowIndex: number | undefined;
+  const match = res.updates?.updatedRange?.match(/![A-Z]+(\d+):/);
+  if (match && match[1]) {
+    startRowIndex = Number(match[1]);
+  }
+
+  return invoices.map((inv, idx) => ({
+    ...inv,
+    rowIndex: startRowIndex !== undefined ? startRowIndex + idx : inv.rowIndex,
+  }));
+}
+
+export async function updateInvoiceRowsBatch(
+  spreadsheetId: string,
+  accessToken: string,
+  invoices: InvoiceRecord[],
+  invoicesSheetName = 'Invoices_DB'
+): Promise<InvoiceRecord[]> {
+  if (invoices.length === 0) return [];
+  const { sheetName } = await ensureInvoicesSheet(spreadsheetId, accessToken, invoicesSheetName);
+
+  let resolved = invoices;
+  if (invoices.some((inv) => !inv.rowIndex)) {
+    const all = await readInvoicesSheet(spreadsheetId, accessToken, sheetName);
+    const byId = new Map(all.map((r) => [r.id, r.rowIndex]));
+    resolved = invoices.map((inv) => {
+      const rowIndex = inv.rowIndex || byId.get(inv.id);
+      if (!rowIndex) {
+        throw new Error(`Baris invoice "${inv.invoiceNumber}" tidak ditemukan di Google Sheet.`);
+      }
+      return { ...inv, rowIndex };
+    });
+  }
+
+  await sheetsFetch(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        valueInputOption: 'RAW',
+        data: resolved.map((inv) => ({
+          range: `'${sheetName}'!A${inv.rowIndex}:AH${inv.rowIndex}`,
+          values: [invoiceToRow(inv)],
+        })),
+      }),
+    }
+  );
+
+  return resolved;
+}
+
+export async function readSheetValuesRaw(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetName: string
+): Promise<unknown[][]> {
+  const info = await fetchSpreadsheetInfo(spreadsheetId, accessToken);
+  const trimmed = sheetName.trim();
+  const matchedTab = info.sheetTabs.find(
+    (t) => t.title.toLowerCase() === trimmed.toLowerCase()
+  );
+
+  if (!matchedTab) {
+    const available = info.sheetTabs.map((t) => `"${t.title}"`).join(', ');
+    throw new Error(
+      `Tab "${trimmed}" tidak ditemukan pada Spreadsheet "${info.title}". Tab tersedia: ${available || '-'}.`
+    );
+  }
+
+  const range = encodeURIComponent(`'${matchedTab.title}'!A:Z`);
+  const data = await sheetsFetch<{ values?: unknown[][] }>(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueRenderOption=UNFORMATTED_VALUE`,
+    accessToken
+  );
+
+  return data.values || [];
+}
+
 export async function ensureCustomersSheet(
   spreadsheetId: string,
   accessToken: string,
