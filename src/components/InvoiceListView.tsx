@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import type { InvoiceRecord } from '../types/invoice';
-import { formatRupiahWithPrefix } from '../utils/invoiceLogic';
+import {
+  formatDateDdMmmYyyy,
+  formatRupiahWithPrefix,
+  isVgreenCustomer,
+} from '../utils/invoiceLogic';
 import { CheckCircle2, Edit3, FileDown, Eye, Plus, Search, History } from 'lucide-react';
 
 interface InvoiceListViewProps {
@@ -39,7 +43,8 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
           inv.projectLocation.toLowerCase().includes(q) ||
           inv.chargingType.toLowerCase().includes(q) ||
           inv.consWoNumber.toLowerCase().includes(q) ||
-          inv.noEfaktur.toLowerCase().includes(q)
+          inv.noEfaktur.toLowerCase().includes(q) ||
+          inv.billToName.toLowerCase().includes(q)
         );
       });
   }, [invoices, search, statusFilter, terminFilter, modeFilter]);
@@ -139,7 +144,7 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500">
                   <th className="py-2.5 px-3">No. Invoice &amp; Tanggal</th>
-                  <th className="py-2.5 px-3">Project, Charging &amp; WO</th>
+                  <th className="py-2.5 px-3">Customer, Item &amp; WO/PO</th>
                   <th className="py-2.5 px-3">Termin</th>
                   <th className="py-2.5 px-3 text-right">Grand Total (PPN)</th>
                   <th className="py-2.5 px-3">Pembayaran</th>
@@ -154,17 +159,21 @@ export const InvoiceListView: React.FC<InvoiceListViewProps> = ({
                         {inv.invoiceNumber}
                       </div>
                       <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                        {inv.invoiceDateDisplay || inv.invoiceDate} ·{' '}
+                        {formatDateDdMmmYyyy(inv.invoiceDate || inv.invoiceDateDisplay)} ·{' '}
                         {inv.mode === 'LEGACY' ? 'Legacy' : 'Auto'}
                         {inv.noEfaktur ? ` · ${inv.noEfaktur}` : ''}
                       </div>
                     </td>
-                    <td className="py-3 px-3 max-w-[195px]">
+                    <td className="py-3 px-3 max-w-[215px]">
                       <div className="font-semibold text-slate-900 truncate">
-                        {inv.projectLocation}
+                        {inv.projectLocation || inv.items[0]?.description || '-'}
                       </div>
                       <div className="text-[11px] text-slate-500 truncate">
-                        {inv.chargingType} · <span className="font-mono">{inv.consWoNumber}</span>
+                        {!isVgreenCustomer(inv.billToName) && inv.billToName
+                          ? `${inv.billToName} · `
+                          : ''}
+                        {inv.chargingType && inv.chargingType !== '-' ? `${inv.chargingType} · ` : ''}
+                        <span className="font-mono">{inv.consWoNumber || '-'}</span>
                       </div>
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap font-medium text-slate-800 tabular-nums">

@@ -1,4 +1,5 @@
 import type {
+  CustomerRecord,
   InvoiceLineItem,
   InvoiceMode,
   InvoiceRecord,
@@ -6,9 +7,18 @@ import type {
   QueryRow,
   TerminPercent,
 } from '../types/invoice';
-import { parseQueryRows } from '../utils/invoiceLogic';
+import {
+  DEFAULT_VGREEN_CUSTOMER,
+  formatDateDdMmmYyyy,
+  formatPeriodDisplay,
+  isVgreenCustomer,
+  parseQueryRows,
+  parseSheetDateToIso,
+} from '../utils/invoiceLogic';
 
 const SHEETS_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
+
+export const CUSTOMERS_SHEET_HEADERS = ['ID', 'Customer Name', 'Address', 'Created At'];
 
 export const INVOICE_SHEET_HEADERS = [
   'ID',
@@ -299,20 +309,30 @@ function rowToInvoice(row: string[], rowIndex: number): InvoiceRecord | null {
   const paymentStatus: PaymentStatus =
     (row[24] || '').toUpperCase() === 'PAID' ? 'PAID' : 'UNPAID';
 
+  const invoiceDateIso = parseSheetDateToIso(row[4]) || row[4] || '';
+  const invoiceDateDisplay = formatDateDdMmmYyyy(
+    row[4] || row[5],
+    invoiceDateIso || row[5]
+  );
+  const period = formatPeriodDisplay(row[6], invoiceDateIso || row[5]);
+  const queryDateIso = parseSheetDateToIso(row[11]);
+  const paidDate = parseSheetDateToIso(row[25]) || row[25] || '';
+  const retentionDueIso = parseSheetDateToIso(row[28]);
+
   return {
     id: id || `row-${rowIndex}`,
     rowIndex,
     invoiceNumber,
     seqNumber: Number(row[2]) || 0,
     mode,
-    invoiceDate: row[4] || '',
-    invoiceDateDisplay: row[5] || '',
-    period: row[6] || '',
+    invoiceDate: invoiceDateIso,
+    invoiceDateDisplay,
+    period,
     epcName: row[7] || 'CLX',
     chargingType: row[8] || '',
     projectLocation: row[9] || '',
     consWoNumber: row[10] || '',
-    queryDateIso: row[11] ? row[11] : null,
+    queryDateIso,
     termin,
     terminLabel: row[13] || `TERMIN (${termin}%)`,
     contractAmount: Number(row[14]) || 0,
@@ -326,10 +346,10 @@ function rowToInvoice(row: string[], rowIndex: number): InvoiceRecord | null {
     billToAddress: row[22] || '',
     items,
     paymentStatus,
-    paidDate: row[25] || '',
+    paidDate,
     paymentRef: row[26] || '',
     paymentNote: row[27] || '',
-    retentionDueIso: row[28] ? row[28] : null,
+    retentionDueIso,
     signatoryName: row[29] || 'Christian',
     signatoryTitle: row[30] || 'President Director',
     signatoryCity: row[31] || 'Jakarta',
@@ -372,7 +392,7 @@ export async function appendInvoiceRow(
   const range = encodeURIComponent(`'${sheetName}'!A:AH`);
 
   const res = await sheetsFetch<{ updates?: { updatedRange?: string } }>(
-    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     accessToken,
     {
       method: 'POST',
@@ -410,7 +430,7 @@ export async function updateInvoiceRow(
 
   const range = encodeURIComponent(`'${invoicesSheetName}'!A${invoice.rowIndex}:AH${invoice.rowIndex}`);
   await sheetsFetch(
-    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=USER_ENTERED`,
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=RAW`,
     accessToken,
     {
       method: 'PUT',
@@ -421,4 +441,183 @@ export async function updateInvoiceRow(
   );
 
   return invoice;
+}
+
+export async function ensureCustomersSheet(
+  spreadsheetId: string,
+  accessToken: string,
+  customersSheetName = 'Customers_DB'
+): Promise<{ created: boolean; sheetName: string }> {
+  const info = await fetchSpreadsheetInfo(spreadsheetId, accessToken);
+  const existing = info.sheetTabs.find(
+    (t) => t.title.toLowerCase() === customersSheetName.toLowerCase()
+  );
+
+  if (existing) {
+    const checkRange = encodeURIComponent(`'${existing.title}'!A1:D1`);
+    const headerRes = await sheetsFetch<{ values?: string[][] }>(
+      `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${checkRange}`,
+      accessToken
+    );
+    if (!headerRes.values || headerRes.values.length === 0 || !headerRes.values[0]?.[0]) {
+      await writeCustomersHeader(spreadsheetId, accessToken, existing.title, existing.sheetId);
+    }
+    return { created: false, sheetName: existing.title };
+  }
+
+  const addRes = await sheetsFetch<{
+    replies?: Array<{ addSheet?: { properties?: { sheetId?: number; title?: string } } }>;
+  }>(`${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: customersSheetName,
+              gridProperties: {
+                frozenRowCount: 1,
+                rowCount: 500,
+                columnCount: CUSTOMERS_SHEET_HEADERS.length,
+              },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  const newSheetId = addRes.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
+  await writeCustomersHeader(spreadsheetId, accessToken, customersSheetName, newSheetId);
+
+  // Seed default Vgreen customer row on newly created Customers_DB sheet
+  await appendCustomerRow(
+    spreadsheetId,
+    accessToken,
+    {
+      ...DEFAULT_VGREEN_CUSTOMER,
+      createdAt: new Date().toISOString(),
+    },
+    customersSheetName
+  );
+
+  return { created: true, sheetName: customersSheetName };
+}
+
+async function writeCustomersHeader(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetName: string,
+  sheetId: number
+): Promise<void> {
+  const headerRange = encodeURIComponent(`'${sheetName}'!A1:D1`);
+  await sheetsFetch(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${headerRange}?valueInputOption=RAW`,
+    accessToken,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        values: [CUSTOMERS_SHEET_HEADERS],
+      }),
+    }
+  );
+
+  await sheetsFetch(`${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [
+        {
+          repeatCell: {
+            range: {
+              sheetId,
+              startRowIndex: 0,
+              endRowIndex: 1,
+              startColumnIndex: 0,
+              endColumnIndex: CUSTOMERS_SHEET_HEADERS.length,
+            },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: { red: 0.06, green: 0.09, blue: 0.16 },
+                textFormat: {
+                  foregroundColor: { red: 1, green: 1, blue: 1 },
+                  fontSize: 10,
+                  bold: true,
+                },
+                horizontalAlignment: 'LEFT',
+                verticalAlignment: 'MIDDLE',
+              },
+            },
+            fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+          },
+        },
+        {
+          updateSheetProperties: {
+            properties: {
+              sheetId,
+              gridProperties: { frozenRowCount: 1 },
+            },
+            fields: 'gridProperties.frozenRowCount',
+          },
+        },
+      ],
+    }),
+  });
+}
+
+export async function readCustomersSheet(
+  spreadsheetId: string,
+  accessToken: string,
+  customersSheetName = 'Customers_DB'
+): Promise<CustomerRecord[]> {
+  const { sheetName } = await ensureCustomersSheet(spreadsheetId, accessToken, customersSheetName);
+  const range = encodeURIComponent(`'${sheetName}'!A2:D`);
+  const data = await sheetsFetch<{ values?: string[][] }>(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueRenderOption=FORMATTED_VALUE`,
+    accessToken
+  );
+
+  const records: CustomerRecord[] = [];
+  (data.values || []).forEach((row, idx) => {
+    const name = (row[1] || '').trim();
+    if (!name) return;
+    records.push({
+      id: (row[0] || '').trim() || `cust-row-${idx + 2}`,
+      name,
+      address: (row[2] || '').trim(),
+      isVgreen: isVgreenCustomer(name),
+      createdAt: (row[3] || '').trim(),
+    });
+  });
+
+  return records;
+}
+
+export async function appendCustomerRow(
+  spreadsheetId: string,
+  accessToken: string,
+  customer: CustomerRecord,
+  customersSheetName = 'Customers_DB'
+): Promise<CustomerRecord> {
+  const { sheetName } = await ensureCustomersSheet(spreadsheetId, accessToken, customersSheetName);
+  const range = encodeURIComponent(`'${sheetName}'!A:D`);
+  const createdAt = customer.createdAt || new Date().toISOString();
+
+  await sheetsFetch(
+    `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        values: [[customer.id, customer.name.trim(), customer.address.trim(), createdAt]],
+      }),
+    }
+  );
+
+  return {
+    ...customer,
+    name: customer.name.trim(),
+    address: customer.address.trim(),
+    isVgreen: isVgreenCustomer(customer.name),
+    createdAt,
+  };
 }

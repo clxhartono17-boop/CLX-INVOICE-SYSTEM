@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import type {
   ActiveTab,
   AppSettings,
+  CustomerRecord,
   InvoiceMode,
   InvoiceRecord,
   QueryRow,
@@ -10,8 +11,11 @@ import type {
 } from './types/invoice';
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_VGREEN_CUSTOMER,
   buildRetentionReminders,
   formatAuthErrorMessage,
+  isVgreenCustomer,
+  mergeCustomerLists,
 } from './utils/invoiceLogic';
 import {
   getAccessToken,
@@ -20,13 +24,19 @@ import {
   logout,
 } from './services/googleAuth';
 import {
+  appendCustomerRow,
   appendInvoiceRow,
   ensureInvoicesSheet,
+  readCustomersSheet,
   readInvoicesSheet,
   readQuerySheet,
   updateInvoiceRow,
 } from './services/googleSheets';
-import { SANDBOX_INVOICES, SANDBOX_QUERY_ROWS } from './data/sandboxData';
+import {
+  SANDBOX_CUSTOMERS,
+  SANDBOX_INVOICES,
+  SANDBOX_QUERY_ROWS,
+} from './data/sandboxData';
 import { generateInvoicePdf } from './utils/pdfGenerator';
 import { ClxLogoMark } from './components/ClxLogo';
 import { SignInGate } from './components/SignInGate';
@@ -52,6 +62,7 @@ import {
 } from 'lucide-react';
 
 const SETTINGS_STORAGE_KEY = 'clx_invoice_app_settings_v1';
+const CUSTOMERS_STORAGE_KEY = 'clx_invoice_customers_v1';
 
 function loadSavedSettings(): AppSettings {
   try {
@@ -61,6 +72,21 @@ function loadSavedSettings(): AppSettings {
   } catch {
     return DEFAULT_SETTINGS;
   }
+}
+
+function loadSavedCustomers(sandbox: boolean): CustomerRecord[] {
+  if (sandbox) return SANDBOX_CUSTOMERS;
+  try {
+    const raw = localStorage.getItem(CUSTOMERS_STORAGE_KEY);
+    if (!raw) return [DEFAULT_VGREEN_CUSTOMER];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return mergeCustomerLists(parsed as CustomerRecord[], []);
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [DEFAULT_VGREEN_CUSTOMER];
 }
 
 export default function App() {
@@ -82,6 +108,9 @@ export default function App() {
   );
   const [invoices, setInvoices] = useState<InvoiceRecord[]>(() =>
     isSandbox ? SANDBOX_INVOICES : []
+  );
+  const [customers, setCustomers] = useState<CustomerRecord[]>(() =>
+    loadSavedCustomers(isSandbox)
   );
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -119,13 +148,18 @@ export default function App() {
       setIsSyncing(true);
       setSyncError(null);
       try {
-        const [qRows, sheetSetup] = await Promise.all([
+        const [qRows, sheetSetup, sheetCustomers] = await Promise.all([
           readQuerySheet(activeSettings.spreadsheetId, token, activeSettings.querySheetName),
           ensureInvoicesSheet(
             activeSettings.spreadsheetId,
             token,
             activeSettings.invoicesSheetName
           ),
+          readCustomersSheet(
+            activeSettings.spreadsheetId,
+            token,
+            activeSettings.customersSheetName || 'Customers_DB'
+          ).catch(() => [] as CustomerRecord[]),
         ]);
 
         const invRows = await readInvoicesSheet(
@@ -134,8 +168,15 @@ export default function App() {
           sheetSetup.sheetName
         );
 
+        const mergedCustomers = mergeCustomerLists(sheetCustomers, invRows);
         setQueryRows(qRows);
         setInvoices(invRows);
+        setCustomers(mergedCustomers);
+        try {
+          localStorage.setItem(CUSTOMERS_STORAGE_KEY, JSON.stringify(mergedCustomers));
+        } catch {
+          // ignore storage errors
+        }
         if (sheetSetup.created) {
           showToast(
             `Tab baru "${sheetSetup.sheetName}" berhasil dibuat otomatis di Google Sheet.`
@@ -191,8 +232,52 @@ export default function App() {
     setNeedsAuth(false);
     setQueryRows(SANDBOX_QUERY_ROWS);
     setInvoices(SANDBOX_INVOICES);
+    setCustomers(SANDBOX_CUSTOMERS);
     setSyncError(null);
     showToast('Mode Sandbox Simulasi aktif dengan data sampel PT. CLX.');
+  };
+
+  const handleAddCustomer = async (payload: {
+    name: string;
+    address: string;
+  }): Promise<CustomerRecord> => {
+    const newRecord: CustomerRecord = {
+      id: `cust-${Date.now()}`,
+      name: payload.name.trim(),
+      address: payload.address.trim(),
+      isVgreen: isVgreenCustomer(payload.name),
+      createdAt: new Date().toISOString(),
+    };
+
+    if (isSandbox) {
+      setCustomers((prev) => mergeCustomerLists([...prev, newRecord], []));
+      showToast(`Customer "${newRecord.name}" ditambahkan (Sandbox).`);
+      return newRecord;
+    }
+
+    const token = getAccessToken();
+    if (!token) {
+      setNeedsAuth(true);
+      throw new Error('Sesi Google Anda berakhir. Silakan Sign in with Google kembali.');
+    }
+
+    const saved = await appendCustomerRow(
+      settings.spreadsheetId,
+      token,
+      newRecord,
+      settings.customersSheetName || 'Customers_DB'
+    );
+    setCustomers((prev) => {
+      const next = mergeCustomerLists([...prev, saved], []);
+      try {
+        localStorage.setItem(CUSTOMERS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+    showToast(`Customer "${saved.name}" tersimpan ke Google Sheet (Customers_DB).`);
+    return saved;
   };
 
   const handleLogout = async () => {
@@ -723,9 +808,11 @@ export default function App() {
         preselectedTermin={preselectedTermin}
         queryRows={queryRows}
         existingInvoices={invoices}
+        customers={customers}
         settings={settings}
         isSaving={isSaving}
         onClose={() => setFormOpen(false)}
+        onAddCustomer={handleAddCustomer}
         onSave={handleSaveInvoice}
       />
 

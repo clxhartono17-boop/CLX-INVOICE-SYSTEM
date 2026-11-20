@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  CustomerRecord,
   InvoiceLineItem,
   InvoiceMode,
   InvoiceRecord,
@@ -12,19 +13,32 @@ import type {
 
 export const DEFAULT_SPREADSHEET_ID = '1DAMUTOSwLDKXHaSZFTgInITDWtlBL6oRbnmp6xPIH1o';
 
+export const DEFAULT_VGREEN_CUSTOMER: CustomerRecord = {
+  id: 'cust-vgreen',
+  name: 'PT Vgreen Global Charging Station Investment Indonesia',
+  address:
+    'Graha Binakarsa Lt.7 Jl. H.R Rasuna Said Kav C-18 RT 02 RW 005, Karet Kuningan, Kec. Setiabudi Jakarta Selatan',
+  isVgreen: true,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   spreadsheetId: DEFAULT_SPREADSHEET_ID,
   querySheetName: 'Query',
   invoicesSheetName: 'Invoices_DB',
+  customersSheetName: 'Customers_DB',
   startingSequence: 850,
   defaultTaxRate: 11,
-  defaultBillToName: 'PT Vgreen Global Charging Station Investment Indonesia',
-  defaultBillToAddress:
-    'Graha Binakarsa Lt.7 Jl. H.R Rasuna Said Kav C-18 RT 02 RW 005, Karet Kuningan, Kec. Setiabudi Jakarta Selatan',
+  defaultBillToName: DEFAULT_VGREEN_CUSTOMER.name,
+  defaultBillToAddress: DEFAULT_VGREEN_CUSTOMER.address,
   signatoryName: 'Christian',
   signatoryTitle: 'President Director',
   signatoryCity: 'Jakarta',
 };
+
+export function isVgreenCustomer(customerName: string | undefined | null): boolean {
+  const normalized = (customerName || '').trim().toLowerCase();
+  return normalized.includes('vgreen');
+}
 
 const ROMAN_MONTHS = [
   'I',
@@ -56,6 +70,21 @@ const ENGLISH_MONTHS = [
   'December',
 ];
 
+const SHORT_ENGLISH_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
 export function extractSpreadsheetId(input: string): string {
   const trimmed = input.trim();
   const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -85,22 +114,58 @@ export function toRomanMonth(month1To12: number): string {
 }
 
 export function formatMonthYear(dateIso: string): string {
-  const parts = dateIso.split('-');
+  const iso = parseSheetDateToIso(dateIso) || dateIso;
+  const parts = iso.split('-');
   if (parts.length !== 3) return dateIso;
   const year = Number(parts[0]);
   const month = Number(parts[1]);
   if (!year || month < 1 || month > 12) return dateIso;
-  return `${ENGLISH_MONTHS[month - 1]} ${year}`;
+  return `${SHORT_ENGLISH_MONTHS[month - 1]}-${year}`;
+}
+
+/**
+ * Formats any date string, ISO date, Month-Year string, or Google Sheets serial number (e.g. 46054)
+ * into strict "MMM-YYYY" format (e.g. "Feb-2026").
+ */
+export function formatPeriodDisplay(
+  rawOrIso: string | number | null | undefined,
+  fallbackIso?: string | number | null
+): string {
+  const iso = parseSheetDateToIso(rawOrIso) || parseSheetDateToIso(fallbackIso);
+  if (iso) {
+    const parts = iso.split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    if (year && month >= 1 && month <= 12) {
+      return `${SHORT_ENGLISH_MONTHS[month - 1]}-${year}`;
+    }
+  }
+  return rawOrIso !== null && rawOrIso !== undefined ? String(rawOrIso).trim() : '';
+}
+
+/**
+ * Formats any date string, ISO date, or Google Sheets serial number (e.g. 46054)
+ * into strict "DD-MMM-YYYY" format (e.g. "01-Feb-2026").
+ */
+export function formatDateDdMmmYyyy(
+  rawOrIso: string | number | null | undefined,
+  fallbackIso?: string | number | null
+): string {
+  const iso = parseSheetDateToIso(rawOrIso) || parseSheetDateToIso(fallbackIso);
+  if (iso) {
+    const parts = iso.split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    if (year && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${pad2(day)}-${SHORT_ENGLISH_MONTHS[month - 1]}-${year}`;
+    }
+  }
+  return rawOrIso !== null && rawOrIso !== undefined ? String(rawOrIso).trim() : '';
 }
 
 export function formatFullDateDisplay(dateIso: string): string {
-  const parts = dateIso.split('-');
-  if (parts.length !== 3) return dateIso;
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return dateIso;
-  return `${day} ${ENGLISH_MONTHS[month - 1]} ${year}`;
+  return formatDateDdMmmYyyy(dateIso);
 }
 
 export function formatRupiah(amount: number): string {
@@ -231,6 +296,15 @@ export function parseSheetDateToIso(raw: string | number | null | undefined): st
     if (month) return buildIso(year, month, day);
   }
 
+  // 6. "Feb-2026", "February 2026", "Nov 2026" (Period format -> 1st of month)
+  const monY = str.match(/^([A-Za-z]+)[\s-]+(\d{4})$/);
+  if (monY) {
+    const monKey = monY[1].toLowerCase();
+    const year = Number(monY[2]);
+    const month = MONTH_NAME_MAP[monKey];
+    if (month) return buildIso(year, month, 1);
+  }
+
   return null;
 }
 
@@ -331,16 +405,19 @@ export function generateNextInvoiceNumber(
     if (seq > maxSeq) maxSeq = seq;
   }
 
-  const parts = invoiceDateIso.split('-');
+  const iso = parseSheetDateToIso(invoiceDateIso) || invoiceDateIso;
+  const parts = iso.split('-');
   const year = parts[0] || String(new Date().getFullYear());
   const month = Number(parts[1]) || new Date().getMonth() + 1;
   const romanMonth = toRomanMonth(month);
 
+  const formatSeq = (seq: number) => String(seq).padStart(3, '0');
+
   let candidateSeq = maxSeq + 1;
-  let candidateNumber = `${candidateSeq}/INV/CLX/${romanMonth}/${year}`;
+  let candidateNumber = `${formatSeq(candidateSeq)}/INV/CLX/${romanMonth}/${year}`;
   while (existingNumbers.has(candidateNumber.toUpperCase())) {
     candidateSeq += 1;
-    candidateNumber = `${candidateSeq}/INV/CLX/${romanMonth}/${year}`;
+    candidateNumber = `${formatSeq(candidateSeq)}/INV/CLX/${romanMonth}/${year}`;
   }
 
   return {
@@ -463,6 +540,8 @@ export function validateInvoiceForm(params: {
   items: InvoiceLineItem[];
   existingInvoices: InvoiceRecord[];
   editingInvoiceId?: string;
+  billToName?: string;
+  isVgreen?: boolean;
 }): string | null {
   const {
     mode,
@@ -474,14 +553,26 @@ export function validateInvoiceForm(params: {
     items,
     existingInvoices,
     editingInvoiceId,
+    billToName,
+    isVgreen = billToName !== undefined ? isVgreenCustomer(billToName) : true,
   } = params;
 
-  if (!chargingType.trim() || !projectLocation.trim()) {
-    return 'Charging Type dan Project / Location Name wajib dipilih.';
-  }
+  if (isVgreen) {
+    if (!chargingType.trim() || !projectLocation.trim()) {
+      return 'Charging Type dan Project / Location Name wajib dipilih.';
+    }
 
-  if (!consWoNumber.trim()) {
-    return 'Cons WO number (Kolom W) tidak boleh kosong.';
+    if (!consWoNumber.trim()) {
+      return 'Cons WO number (Kolom W) tidak boleh kosong.';
+    }
+  } else {
+    if (!billToName || !billToName.trim()) {
+      return 'Customer wajib dipilih atau ditambahkan terlebih dahulu.';
+    }
+    const hasNamedItem = items.some((it) => it.description.trim().length > 0);
+    if (!hasNamedItem) {
+      return 'Minimal satu Item Description wajib diisi secara manual.';
+    }
   }
 
   if (!invoiceNumber.trim()) {
@@ -496,19 +587,24 @@ export function validateInvoiceForm(params: {
     return `Nomor invoice "${invoiceNumber}" sudah ada di sistem. Gunakan nomor lain agar tidak terjadi duplikasi.`;
   }
 
-  const availability = getTerminAvailability(
-    chargingType,
-    projectLocation,
-    existingInvoices,
-    mode,
-    editingInvoiceId
-  );
-
-  if (!availability.allowedTermins.includes(termin)) {
-    return (
-      availability.lockedReasons[termin] ||
-      `Termin ${termin}% tidak dapat dibuat untuk kombinasi Charging Type & Project ini.`
+  if (isVgreen) {
+    const vgreenInvoices = existingInvoices.filter((inv) =>
+      !inv.billToName || isVgreenCustomer(inv.billToName)
     );
+    const availability = getTerminAvailability(
+      chargingType,
+      projectLocation,
+      vgreenInvoices,
+      mode,
+      editingInvoiceId
+    );
+
+    if (!availability.allowedTermins.includes(termin)) {
+      return (
+        availability.lockedReasons[termin] ||
+        `Termin ${termin}% tidak dapat dibuat untuk kombinasi Charging Type & Project ini.`
+      );
+    }
   }
 
   if (items.length === 0 || items.every((item) => item.qty <= 0 || item.unitPrice <= 0)) {
@@ -634,12 +730,56 @@ export function calculateInvoiceAmounts(
   };
 }
 
+export function mergeCustomerLists(
+  storedCustomers: CustomerRecord[],
+  invoices: Pick<InvoiceRecord, 'billToName' | 'billToAddress'>[]
+): CustomerRecord[] {
+  const byName = new Map<string, CustomerRecord>();
+
+  // Always include default Vgreen first
+  byName.set(normalizeText(DEFAULT_VGREEN_CUSTOMER.name).toLowerCase(), DEFAULT_VGREEN_CUSTOMER);
+
+  for (const cust of storedCustomers) {
+    const cleanName = normalizeText(cust.name || '');
+    if (!cleanName) continue;
+    const key = cleanName.toLowerCase();
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, {
+        ...cust,
+        name: cleanName,
+        address: (cust.address || '').trim(),
+        isVgreen: cust.isVgreen ?? isVgreenCustomer(cleanName),
+      });
+    } else if (!existing.address && cust.address) {
+      byName.set(key, { ...existing, address: cust.address.trim() });
+    }
+  }
+
+  for (const inv of invoices) {
+    const cleanName = normalizeText(inv.billToName || '');
+    if (!cleanName) continue;
+    const key = cleanName.toLowerCase();
+    if (!byName.has(key)) {
+      byName.set(key, {
+        id: `cust-inv-${key.replace(/[^a-z0-9]/g, '').slice(0, 12) || 'auto'}`,
+        name: cleanName,
+        address: (inv.billToAddress || '').trim(),
+        isVgreen: isVgreenCustomer(cleanName),
+      });
+    }
+  }
+
+  return Array.from(byName.values());
+}
+
 export function buildProjectTerminSummaries(
   queryRows: QueryRow[],
   invoices: InvoiceRecord[]
 ): ProjectTerminSummary[] {
   const invoiceMap = new Map<string, InvoiceRecord[]>();
   for (const inv of invoices) {
+    if (inv.billToName && !isVgreenCustomer(inv.billToName)) continue;
     const key = makeProjectKey(inv.chargingType, inv.projectLocation);
     const list = invoiceMap.get(key) || [];
     list.push(inv);

@@ -4,13 +4,17 @@ import {
   addOneYearIso,
   buildRetentionReminders,
   calculateInvoiceAmounts,
+  formatAuthErrorMessage,
+  formatDateDdMmmYyyy,
+  formatPeriodDisplay,
   generateNextInvoiceNumber,
   getTerminAvailability,
+  isVgreenCustomer,
+  mergeCustomerLists,
   numberToWords,
   parseQueryRows,
   parseSheetDateToIso,
   validateInvoiceForm,
-  formatAuthErrorMessage,
 } from './invoiceLogic';
 import type { InvoiceRecord, QueryRow } from '../types/invoice';
 
@@ -216,4 +220,89 @@ test('formatAuthErrorMessage provides clear Indonesian guidance for OAuth & doma
   const deniedErr = formatAuthErrorMessage(new Error('Access blocked: Error 403: access_denied'));
   assert.ok(deniedErr.includes('Test users'));
 });
+
+test('formatPeriodDisplay (MMM-YYYY) and formatDateDdMmmYyyy (DD-MMM-YYYY) decode Google Sheets serial 46054 and ISO dates', () => {
+  // Serial 46054 = 2026-02-01 (from reported PDF bug)
+  assert.equal(parseSheetDateToIso('46054'), '2026-02-01');
+  assert.equal(formatPeriodDisplay('46054'), 'Feb-2026');
+  assert.equal(formatDateDdMmmYyyy('46054'), '01-Feb-2026');
+
+  // ISO dates & text periods
+  assert.equal(formatPeriodDisplay('2026-11-19'), 'Nov-2026');
+  assert.equal(formatDateDdMmmYyyy('2026-11-19'), '19-Nov-2026');
+  assert.equal(formatPeriodDisplay('February 2026'), 'Feb-2026');
+  assert.equal(formatPeriodDisplay('Nov-2026'), 'Nov-2026');
+});
+
+test('Invoice sequence numbering continues globally across different customers with 3-digit zero padding', () => {
+  const mixedCustomerInvoices = [
+    makeDummyInvoice({
+      id: 'c1',
+      invoiceNumber: '007/INV/CLX/II/2025',
+      seqNumber: 7,
+      billToName: 'PT Vgreen Global Charging Station Investment Indonesia',
+    }),
+    makeDummyInvoice({
+      id: 'c2',
+      invoiceNumber: '008/INV/CLX/II/2025',
+      seqNumber: 8,
+      billToName: 'PT Sinar Energi Mandiri',
+    }),
+  ];
+
+  const next = generateNextInvoiceNumber(mixedCustomerInvoices, 1, '2026-11-19');
+  assert.equal(next.seqNumber, 9);
+  assert.equal(next.invoiceNumber, '009/INV/CLX/XI/2026');
+});
+
+test('Non-Vgreen customer validation supports manual ITEM DESCRIPTION without Query row while enforcing unique invoice numbers', () => {
+  assert.equal(isVgreenCustomer('PT Vgreen Global Charging Station Investment Indonesia'), true);
+  assert.equal(isVgreenCustomer('PT Sinar Energi Mandiri'), false);
+
+  const validManual = validateInvoiceForm({
+    mode: 'NEW',
+    invoiceNumber: '850/INV/CLX/XI/2026',
+    chargingType: '-',
+    projectLocation: 'Instalasi Panel Listrik Gudang Cikarang',
+    consWoNumber: 'PO-2026/001',
+    termin: 35,
+    billToName: 'PT Sinar Energi Mandiri',
+    isVgreen: false,
+    items: [
+      {
+        id: '1',
+        description: 'Instalasi Panel Listrik Gudang Cikarang',
+        qty: 1,
+        uom: 'Lot',
+        unitPrice: 12000000,
+        amount: 12000000,
+      },
+    ],
+    existingInvoices: [],
+  });
+  assert.equal(validManual, null);
+
+  const missingDesc = validateInvoiceForm({
+    mode: 'NEW',
+    invoiceNumber: '850/INV/CLX/XI/2026',
+    chargingType: '-',
+    projectLocation: '',
+    consWoNumber: '-',
+    termin: 35,
+    billToName: 'PT Sinar Energi Mandiri',
+    isVgreen: false,
+    items: [{ id: '1', description: '   ', qty: 1, uom: 'Unit', unitPrice: 1000000, amount: 1000000 }],
+    existingInvoices: [],
+  });
+  assert.ok(missingDesc && missingDesc.includes('Item Description'));
+
+  const merged = mergeCustomerLists(
+    [{ id: 'c1', name: 'PT Sinar Energi Mandiri', address: 'Jl. Sudirman No. 10' }],
+    [makeDummyInvoice({ billToName: 'PT Sinar Energi Mandiri', billToAddress: 'Jl. Sudirman No. 10' })]
+  );
+  assert.equal(merged.length, 2);
+  assert.equal(isVgreenCustomer(merged[0].name), true);
+  assert.equal(merged[1].name, 'PT Sinar Energi Mandiri');
+});
+
 

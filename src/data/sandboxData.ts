@@ -1,4 +1,16 @@
-import type { InvoiceRecord, QueryRow } from '../types/invoice';
+import type { CustomerRecord, InvoiceRecord, QueryRow } from '../types/invoice';
+import { DEFAULT_VGREEN_CUSTOMER } from '../utils/invoiceLogic';
+
+export const SANDBOX_CUSTOMERS: CustomerRecord[] = [
+  DEFAULT_VGREEN_CUSTOMER,
+  {
+    id: 'cust-sample-nusantara',
+    name: 'PT Nusantara Energi Infrastruktur',
+    address:
+      'Menara Karya Lt. 12, Jl. H.R. Rasuna Said Blok X-5 Kav. 1-2, Kuningan Timur, Setiabudi, Jakarta Selatan 12950',
+    isVgreen: false,
+  },
+];
 
 export const SANDBOX_QUERY_ROWS: QueryRow[] = [
   {
@@ -61,8 +73,8 @@ export const SANDBOX_INVOICES: InvoiceRecord[] = [
     seqNumber: 848,
     mode: 'LEGACY',
     invoiceDate: '2026-09-18',
-    invoiceDateDisplay: 'September 2026',
-    period: 'September 2026',
+    invoiceDateDisplay: '18-Sep-2026',
+    period: 'Sep-2026',
     epcName: 'CLX',
     chargingType: 'BSS 6 Slot 1 Phase',
     projectLocation: 'KF 0016 Pekalongan',
@@ -108,8 +120,8 @@ export const SANDBOX_INVOICES: InvoiceRecord[] = [
     seqNumber: 849,
     mode: 'LEGACY',
     invoiceDate: '2026-11-10',
-    invoiceDateDisplay: 'November 2026',
-    period: 'November 2026',
+    invoiceDateDisplay: '10-Nov-2026',
+    period: 'Nov-2026',
     epcName: 'CLX',
     chargingType: 'BSS 6 Slot 1 Phase',
     projectLocation: 'KF 0016 Pekalongan',
@@ -155,8 +167,8 @@ export const SANDBOX_INVOICES: InvoiceRecord[] = [
     seqNumber: 845,
     mode: 'LEGACY',
     invoiceDate: '2026-08-22',
-    invoiceDateDisplay: 'August 2026',
-    period: 'August 2026',
+    invoiceDateDisplay: '22-Aug-2026',
+    period: 'Aug-2026',
     epcName: 'CLX',
     chargingType: 'DC Fast Charger 60kW',
     projectLocation: 'Rest Area KM 57 Cikampek',
@@ -202,8 +214,8 @@ export const SANDBOX_INVOICES: InvoiceRecord[] = [
     seqNumber: 847,
     mode: 'LEGACY',
     invoiceDate: '2026-10-14',
-    invoiceDateDisplay: 'October 2026',
-    period: 'October 2026',
+    invoiceDateDisplay: '14-Oct-2026',
+    period: 'Oct-2026',
     epcName: 'CLX',
     chargingType: 'DC Fast Charger 60kW',
     projectLocation: 'Rest Area KM 57 Cikampek',

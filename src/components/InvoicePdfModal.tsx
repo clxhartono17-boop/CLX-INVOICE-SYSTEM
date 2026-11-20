@@ -1,6 +1,10 @@
 import React from 'react';
 import type { InvoiceRecord } from '../types/invoice';
-import { formatRupiah } from '../utils/invoiceLogic';
+import {
+  formatDateDdMmmYyyy,
+  formatPeriodDisplay,
+  formatRupiah,
+} from '../utils/invoiceLogic';
 import { ClxLogoMark } from './ClxLogo';
 import { FileDown, Printer, X } from 'lucide-react';
 
@@ -16,6 +20,15 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
   onDownloadPdf,
 }) => {
   if (!invoice) return null;
+
+  const formattedInvoiceDate = formatDateDdMmmYyyy(
+    invoice.invoiceDate || invoice.invoiceDateDisplay,
+    invoice.invoiceDateDisplay
+  );
+  const formattedPeriod = formatPeriodDisplay(
+    invoice.period,
+    invoice.invoiceDate || invoice.invoiceDateDisplay
+  );
 
   return (
     <div
@@ -72,7 +85,7 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
             <div>
               {/* Header Architectural Band */}
               <div className="relative border-b-2 border-[#0A1F44] px-10 py-6 flex items-center justify-between overflow-hidden">
-                <div className="flex items-center gap-4 z-10">
+                <div className="flex items-center gap-4 z-10 max-w-[490px] pr-4">
                   <ClxLogoMark size={60} />
                   <div>
                     <div className="font-display text-2xl font-extrabold tracking-tight text-[#0A1F44]">
@@ -81,7 +94,7 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
                     <div className="text-xs font-semibold tracking-wide text-[#5C7698]">
                       PT. Connectivity Leads eXcellence
                     </div>
-                    <div className="mt-1 text-[10px] leading-snug text-slate-500 max-w-md">
+                    <div className="mt-1 text-[10px] leading-snug text-slate-500 max-w-[365px]">
                       Jl. M. Ali 2 No. 19 RT 007 RW 004 Tanah Baru, Beji, Kota Depok, Jawa Barat
                       16426
                       <br />E : <span className="text-sky-700">clx.central@gmail.com</span> · T : +62
@@ -93,11 +106,11 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
                 {/* Geometric Top-Right Ribbon in Deep Navy & Steel */}
                 <div
                   aria-hidden="true"
-                  className="hidden sm:block absolute right-0 top-0 bottom-0 w-64 pointer-events-none"
+                  className="hidden sm:block absolute right-0 top-0 bottom-0 w-56 pointer-events-none"
                 >
-                  <svg viewBox="0 0 260 110" className="h-full w-full" preserveAspectRatio="none">
-                    <polygon points="55,0 260,0 260,110 15,110" fill="#0A1F44" />
-                    <polygon points="34,0 44,0 4,110 -6,110" fill="#5C7698" />
+                  <svg viewBox="0 0 240 110" className="h-full w-full" preserveAspectRatio="none">
+                    <polygon points="62,0 240,0 240,110 22,110" fill="#0A1F44" />
+                    <polygon points="40,0 50,0 10,110 0,110" fill="#5C7698" />
                   </svg>
                 </div>
               </div>
@@ -136,22 +149,22 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
                   <div className="grid grid-cols-12 gap-1">
                     <span className="col-span-4 text-slate-500">Invoice Date</span>
                     <span className="col-span-8 text-slate-800">
-                      : {invoice.invoiceDateDisplay || invoice.invoiceDate}
+                      : {formattedInvoiceDate || '-'}
                     </span>
                   </div>
                   <div className="grid grid-cols-12 gap-1">
                     <span className="col-span-4 text-slate-500">Project Type</span>
-                    <span className="col-span-8 text-slate-800">: {invoice.chargingType}</span>
+                    <span className="col-span-8 text-slate-800">: {invoice.chargingType || '-'}</span>
                   </div>
                   <div className="grid grid-cols-12 gap-1">
-                    <span className="col-span-4 text-slate-500">WO No.</span>
+                    <span className="col-span-4 text-slate-500">WO/PO No.</span>
                     <span className="col-span-8 font-mono text-slate-800">
-                      : {invoice.consWoNumber}
+                      : {invoice.consWoNumber || '-'}
                     </span>
                   </div>
                   <div className="grid grid-cols-12 gap-1">
                     <span className="col-span-4 text-slate-500">Period</span>
-                    <span className="col-span-8 text-slate-800">: {invoice.period}</span>
+                    <span className="col-span-8 text-slate-800">: {formattedPeriod || '-'}</span>
                   </div>
                   <div className="grid grid-cols-12 gap-1">
                     <span className="col-span-4 text-slate-500">No. Efaktur</span>
@@ -284,8 +297,7 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
 
                 <div className="text-center min-w-[200px] sm:pt-4 ml-auto">
                   <div className="text-slate-800">
-                    {invoice.signatoryCity || 'Jakarta'},{' '}
-                    {invoice.invoiceDateDisplay || invoice.period}
+                    {invoice.signatoryCity || 'Jakarta'}, {formattedInvoiceDate}
                   </div>
                   <div className="mt-16 font-bold text-[#0A1F44] underline underline-offset-4">
                     {invoice.signatoryName || 'Christian'}
@@ -298,7 +310,7 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
             </div>
 
             {/* Bottom Architectural Footer */}
-            <div className="relative mt-10 pt-4 pb-5 px-10 flex items-end justify-between border-t border-slate-100">
+            <div className="relative mt-10 pt-4 pb-5 px-10 flex items-end justify-between border-t border-slate-200">
               <div
                 aria-hidden="true"
                 className="hidden sm:block absolute left-0 bottom-0 w-72 h-12 pointer-events-none"
@@ -313,14 +325,14 @@ export const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
                   />
                 </svg>
               </div>
-              <div className="sm:ml-auto text-[10px] text-slate-500 leading-relaxed">
+              <div className="sm:ml-auto max-w-[330px] text-[10px] text-slate-500 leading-relaxed">
                 <div className="font-bold text-[#0A1F44]">PT. Connectivity Leads eXcellence</div>
                 <div>Head Office</div>
                 <div>
                   Jl. M. Ali 2 No. 19, RT 007 RW 004 Tanah Baru, Beji, Kota Depok, Jawa Barat 16426
                 </div>
                 <div>
-                  E : <span className="text-sky-700">clx.central@gmail.com</span>
+                  E : <span className="text-sky-700">clx.central@gmail.com</span> · T : +62 82148581879
                 </div>
               </div>
             </div>

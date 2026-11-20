@@ -94,10 +94,19 @@ export interface ProjectTerminSummary {
   completionPercent: number;
 }
 
+export interface CustomerRecord {
+  id: string;
+  name: string;
+  address: string;
+  isVgreen?: boolean;
+  createdAt?: string;
+}
+
 export interface AppSettings {
   spreadsheetId: string;
   querySheetName: string;
   invoicesSheetName: string;
+  customersSheetName?: string;
   startingSequence: number;
   defaultTaxRate: number;
   defaultBillToName: string;
